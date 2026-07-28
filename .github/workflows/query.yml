@@ -1,0 +1,42 @@
+name: Query lake
+
+on:
+  workflow_dispatch:
+    inputs:
+      sql:
+        description: "DuckDB SQL against the `docs` view"
+        required: true
+
+concurrency: query-${{ github.run_id }}
+
+jobs:
+  query:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install DuckDB
+        run: pip install duckdb
+
+      - name: Run query
+        run: python -m ingestion.query
+        env:
+          QUERY_SQL: ${{ inputs.sql }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_BUCKET_NAME: ${{ secrets.AWS_BUCKET_NAME }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          S3_LAKE_PREFIX: "market-data/"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: query-results-${{ github.run_id }}
+          path: query_results.csv
+          if-no-files-found: ignore
