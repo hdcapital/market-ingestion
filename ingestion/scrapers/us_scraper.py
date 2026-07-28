@@ -49,8 +49,13 @@ SLEEP_SECONDS = float(os.environ.get("SEC_SLEEP_SECONDS", "0.25"))
 # special-situation forms where Lane-B events actually surface:
 #   SC TO-I / SC TO-T : issuer / third-party tender offers (odd-lot provisions)
 #   SC 14D9           : target's response to a tender
-#   SC 13D            : activist stake with stated intentions (initial filing
-#                       only — /A amendments are high-volume noise)
+#   SC 13D            : activist stake with stated intentions
+#   SC 13D/A          : activist amendments — stored in the lake because the
+#                       escalation moments (stake bumps, board demands,
+#                       liquidation/return-of-capital demands) arrive in /A
+#                       filings; consumers are expected to keyword-gate them
+#                       (global-analyst analyses only amendments whose text
+#                       shows escalation language)
 #   SC 13E3           : going-private transaction (controller/insider buyout of
 #                       minorities, squeeze-out) — initial filing only
 #   25 / 25-NSE       : ACTUAL delisting notification
@@ -62,7 +67,7 @@ US_FORMS = set(
     for f in os.environ.get(
         "US_FORMS",
         "8-K,8-K/A,10-K,10-K/A,10-Q,10-Q/A,"
-        "SC TO-I,SC TO-T,SC 14D9,SC 13D,SC 13E3,25,25-NSE,15-12B,15-12G").split(",")
+        "SC TO-I,SC TO-T,SC 14D9,SC 13D,SC 13D/A,SC 13E3,25,25-NSE,15-12B,15-12G").split(",")
     if f.strip()
 )
 
