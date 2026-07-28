@@ -14,7 +14,7 @@ scraper used.
 import hashlib
 import io
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .. import lake
@@ -64,7 +64,7 @@ SKIP_TITLE_PATTERNS = [
 ]
 _SKIP_RE = re.compile("|".join(SKIP_TITLE_PATTERNS), re.IGNORECASE)
 
-MAX_PDF_PAGES = 80
+MAX_PDF_PAGES = 300
 
 
 def is_admin_noise(headline: str) -> bool:
@@ -115,13 +115,19 @@ def ingest(store, max_docs=None):
             errors.append("ASX harvest returned no links on a weekday")
         return stats, errors, entries, status
 
-    published_date = datetime.now(SYDNEY).strftime("%Y-%m-%d")
+    today_syd = datetime.now(SYDNEY).date()
+    prev_delta = 3 if today_syd.weekday() == 0 else 1  # Monday looks back to Friday
+    page_dates = {
+        "today": today_syd.strftime("%Y-%m-%d"),
+        "prev": (today_syd - timedelta(days=prev_delta)).strftime("%Y-%m-%d"),
+    }
     seen = lake.load_seen_ids(store, "asx")
 
     for info in links_info:
         if max_docs and stats["written"] >= max_docs:
             break
         ticker, url, headline = info["ticker"], info["url"], info.get("headline", "")
+        published_date = page_dates.get(info.get("day", "today"), page_dates["today"])
 
         # HEAD first: the ETag is usually the PDF's MD5, so a repeat is skipped
         # without downloading — the original scraper's cheap-dedupe trick.

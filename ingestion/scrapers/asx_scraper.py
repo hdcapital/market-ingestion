@@ -32,7 +32,11 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 # ---------------------------------------------------------------------------
 
 ASX_ANNOUNCEMENT_URLS = [
-    "https://www.asx.com.au/asx/v2/statistics/todayAnns.do",  # TODAY ONLY
+    "https://www.asx.com.au/asx/v2/statistics/todayAnns.do",
+    # Previous business day too: a mid-morning run would otherwise miss anything
+    # published after it ran the day before. Lake-level dedupe (PDF MD5 checked
+    # against the last week of partitions) makes the overlap free.
+    "https://www.asx.com.au/asx/v2/statistics/prevBusDayAnns.do",
 ]
 BASE_DOMAIN = "https://www.asx.com.au"
 STORAGE_STATE_PATH = "asx_storage.json"
@@ -196,7 +200,13 @@ def harvest_links_and_cookies():
                 print(f"   ⚠️ Failed to load table for {url} (skipping).")
                 continue
 
-            links_info.extend(collect_links_and_tickers(page))
+            page_links = collect_links_and_tickers(page)
+            # Additive tag (same spirit as the headline capture): which page a
+            # link came from, so the adapter can date prev-day documents.
+            day = "prev" if url.endswith("prevBusDayAnns.do") else "today"
+            for it in page_links:
+                it["day"] = day
+            links_info.extend(page_links)
 
         if not links_info:
             print("   ❌ No PDF links found.")

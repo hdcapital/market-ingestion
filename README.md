@@ -7,7 +7,7 @@ watchlists, monitors) reads one store instead of scraping the same sites again.
 
 | Market | Source | Scraper lineage | Schedule (UTC) |
 |---|---|---|---|
-| `asx` | asx.com.au today-announcements (Playwright + PDF) | `asx-analyst` (verbatim) | 00:35 Mon–Fri |
+| `asx` | asx.com.au today + previous-business-day announcements (Playwright + PDF) | `asx-analyst` (verbatim) | 00:35 Mon–Fri |
 | `uk`  | Investegate RNS (HTTP) | `global-analyst/uk_scraper.py` (verbatim) | 21:45 Mon–Fri |
 | `us`  | SEC EDGAR daily form index (HTTP) | `global-analyst/us_scraper.py` (verbatim) | 22:15 Mon–Fri |
 | `otc` | otcmarkets.com news (Selenium) | `global-analyst/otc_scraper.py` (verbatim) | 22:30 Mon–Fri |
@@ -60,6 +60,9 @@ also accepts `max_docs` / `dry_run` inputs for cheap manual tests.
 ## Operational notes
 
 - **Forward-only.** First run starts from "now"; there is no backfill mode.
+- **Caps are circuit breakers, not filters.** Defaults (1M chars/doc, 5,000 US
+  filings/day, 1,000 OTC items/day, 300 PDF pages) sit far above realistic
+  peaks; when one binds the log says what was dropped.
 - **Idempotent.** Documents are keyed by market + published date + native id;
   re-running a day rewrites identical objects and the manifest merge dedupes.
 - **Failure = loud.** Storage preflight runs before any scraping; a scheduled

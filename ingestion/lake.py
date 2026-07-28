@@ -31,7 +31,7 @@ LAKE_PREFIX = os.environ.get("S3_LAKE_PREFIX", "market-data/")
 AWS_BUCKET = os.environ.get("AWS_BUCKET_NAME")
 
 # Cap stored text so one enormous 10-K exhibit can't balloon a document object.
-MAX_DOC_TEXT_CHARS = int(os.environ.get("MAX_DOC_TEXT_CHARS", "300000"))
+MAX_DOC_TEXT_CHARS = int(os.environ.get("MAX_DOC_TEXT_CHARS", "1000000"))
 
 
 def utcnow_iso() -> str:
