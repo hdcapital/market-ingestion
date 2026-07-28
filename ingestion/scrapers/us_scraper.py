@@ -51,6 +51,8 @@ SLEEP_SECONDS = float(os.environ.get("SEC_SLEEP_SECONDS", "0.25"))
 #   SC 14D9           : target's response to a tender
 #   SC 13D            : activist stake with stated intentions (initial filing
 #                       only — /A amendments are high-volume noise)
+#   SC 13E3           : going-private transaction (controller/insider buyout of
+#                       minorities, squeeze-out) — initial filing only
 #   25 / 25-NSE       : ACTUAL delisting notification
 #   15-12B / 15-12G   : deregistration / going dark
 # Foreign private issuers' 6-K/20-F/40-F are intentionally omitted (see module
@@ -60,14 +62,14 @@ US_FORMS = set(
     for f in os.environ.get(
         "US_FORMS",
         "8-K,8-K/A,10-K,10-K/A,10-Q,10-Q/A,"
-        "SC TO-I,SC TO-T,SC 14D9,SC 13D,25,25-NSE,15-12B,15-12G").split(",")
+        "SC TO-I,SC TO-T,SC 14D9,SC 13D,SC 13E3,25,25-NSE,15-12B,15-12G").split(",")
     if f.strip()
 )
 
 # Forms that are terse regulatory notifications where the form's EXISTENCE is
 # the event (a Form 25 delisting can be a page of checkboxes). These bypass the
 # minimum-body-length guard so they still reach the model.
-TERSE_EVENT_FORMS = {"25", "25-NSE", "15-12B", "15-12G", "SC 13D"}
+TERSE_EVENT_FORMS = {"25", "25-NSE", "15-12B", "15-12G", "SC 13D", "SC 13E3"}
 US_LOOKBACK_DAYS = int(os.environ.get("US_LOOKBACK_DAYS", "2"))
 MAX_US_FILINGS = int(os.environ.get("MAX_US_FILINGS", "1500"))
 
