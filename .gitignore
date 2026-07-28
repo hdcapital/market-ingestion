@@ -4,3 +4,4 @@ downloads/
 asx_storage.json
 otc_debug_*
 *.pyc
+compact_test_lake/
