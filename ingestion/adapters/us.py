@@ -34,9 +34,16 @@ def ingest(store, max_docs=None):
             continue
         text = us_scraper.strip_sgml_noise(raw)
         admin = f["form"].startswith("8-K") and us_scraper.is_admin_only_8k(text)
+        # The daily form index writes dates as YYYYMMDD (no dashes) — normalise
+        # to ISO for the date-partitioned lake key; fall back to today if odd.
+        digits = (f.get("date") or "").replace("-", "")
+        if len(digits) == 8 and digits.isdigit():
+            published = f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+        else:
+            published = lake.today_utc()
         doc = lake.build_doc(
             market="us", source="sec-edgar-daily-index", native_id=f["id"], url=f["url"],
-            published_at=f["date"], published_date=f["date"][:10],
+            published_at=published, published_date=published,
             ticker=f.get("ticker", ""), company_name=f.get("company", ""),
             cik=str(int(f["cik"])) if f.get("cik") else None,
             doc_type="filing", form=f["form"],
