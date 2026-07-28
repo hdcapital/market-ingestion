@@ -104,6 +104,8 @@ rewrites the file.
   2,000 free Actions minutes; making this repo public (it holds no secrets
   and only public-market data) makes minutes unlimited, as with
   `investegate-scraper`.
-- GitHub `schedule:` crons are best-effort and can slip under load. If a
-  precise fire time ever matters, use the Cloudflare Worker
-  `workflow_dispatch` pattern from `asx-analyst/scheduler`.
+- **Timing is owned by the Cloudflare Worker scheduler** (`asx-analyst/scheduler`),
+  which fires each ingest via `workflow_dispatch` at: ASX 00:35, UK 21:45,
+  US 22:15, OTC 22:30 (UTC, weekdays). GitHub `schedule:` crons were removed —
+  GitHub silently never fired them for this repo. The monthly compact job keeps
+  its GitHub cron (a late fire is harmless there).

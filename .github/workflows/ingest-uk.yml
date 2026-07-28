@@ -10,9 +10,6 @@ on:
         description: "Write to local _lake/ + artifact instead of S3"
         type: boolean
         default: false
-  schedule:
-    # 21:45 UTC — after the full London RNS day.
-    - cron: "45 21 * * 1-5"
 
 concurrency: ingest-uk
 

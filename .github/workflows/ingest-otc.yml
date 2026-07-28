@@ -10,9 +10,6 @@ on:
         description: "Write to local _lake/ + artifact instead of S3"
         type: boolean
         default: false
-  schedule:
-    # 22:30 UTC — after the US close, before the Sydney morning consumers.
-    - cron: "30 22 * * 1-5"
 
 concurrency: ingest-otc
 

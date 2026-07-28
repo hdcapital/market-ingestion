@@ -10,9 +10,6 @@ on:
         description: "Write to local _lake/ + artifact instead of S3"
         type: boolean
         default: false
-  schedule:
-    # 00:35 UTC = 10:35 Sydney (AEST) / 11:35 (AEDT) — always after the open.
-    - cron: "35 0 * * 1-5"
 
 concurrency: ingest-asx
 

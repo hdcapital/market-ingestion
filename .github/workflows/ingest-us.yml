@@ -10,9 +10,6 @@ on:
         description: "Write to local _lake/ + artifact instead of S3"
         type: boolean
         default: false
-  schedule:
-    # 22:15 UTC — after the EDGAR daily index for the day is posted.
-    - cron: "15 22 * * 1-5"
 
 concurrency: ingest-us
 
