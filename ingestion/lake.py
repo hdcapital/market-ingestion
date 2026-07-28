@@ -66,6 +66,13 @@ class LocalStore:
     def put_json(self, key: str, obj) -> bool:
         return self.put_bytes(key, json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8"))
 
+    def put_file(self, key: str, local_path: str) -> bool:
+        import shutil
+        dest = self._path(key)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copyfile(local_path, dest)
+        return True
+
     def get_bytes(self, key: str) -> Optional[bytes]:
         try:
             with open(self._path(key), "rb") as f:
@@ -116,6 +123,15 @@ class S3Store:
 
     def put_json(self, key: str, obj) -> bool:
         return self.put_bytes(key, json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8"))
+
+    def put_file(self, key: str, local_path: str) -> bool:
+        """Multipart-capable upload for large files (monthly parquet)."""
+        try:
+            self.client.upload_file(local_path, self.bucket, key)
+            return True
+        except Exception as e:
+            print(f"      ❌ S3 UPLOAD FAILED ({key}): {e}")
+            return False
 
     def get_bytes(self, key: str) -> Optional[bytes]:
         try:

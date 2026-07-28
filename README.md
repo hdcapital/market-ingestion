@@ -25,6 +25,7 @@ documents/<market>/<YYYY>/<MM>/<DD>/<native_id>.json   canonical document
 documents/<market>/<YYYY>/<MM>/<DD>/<native_id>.pdf    raw PDF (ASX)
 manifests/<market>/<YYYY-MM-DD>.jsonl                  one line per doc written that day
 manifests/<market>/<YYYY-MM-DD>.done.json              run marker (the timing contract)
+compact/<market>/<YYYY-MM>.parquet                     one-file-per-month rollup for fast SQL
 state/<market>/                                        scraper state
 ```
 
@@ -56,6 +57,36 @@ Secrets (same four as the screener repos): `AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY`, `AWS_BUCKET_NAME`, `AWS_DEFAULT_REGION`. The IAM
 policy must allow list/get/put/delete under `market-data/*`. Each workflow
 also accepts `max_docs` / `dry_run` inputs for cheap manual tests.
+
+## Querying (analyst workflow)
+
+Sync locally, then query with DuckDB — the monthly parquet files make a
+year-long full-text scan take seconds:
+
+```bash
+aws s3 sync s3://YOUR-BUCKET/market-data/ ~/market-data/
+```
+
+```sql
+-- everything a ticker announced, ex-noise
+SELECT published_date, title, url
+FROM read_parquet('~/market-data/compact/asx/*.parquet')
+WHERE ticker = 'PPS' AND NOT is_admin_noise
+ORDER BY published_date;
+
+-- full-text across all US filings
+SELECT published_date, company_name, form, url
+FROM read_parquet('~/market-data/compact/us/*.parquet')
+WHERE text ILIKE '%going concern%';
+```
+
+The current month isn't compacted yet — query it straight from the JSON:
+`read_json_auto('~/market-data/documents/us/2026/*/*/*.json')`. Raw ASX PDFs
+stay under documents/ (the parquet's raw_key column points at them).
+
+Compaction runs automatically on the 2nd of each month for the previous
+month (see ingest schedules below); re-running a month is safe and simply
+rewrites the file.
 
 ## Operational notes
 
