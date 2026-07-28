@@ -1,0 +1,60 @@
+name: Ingest OTC
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_docs:
+        description: "Cap documents this run (blank = uncapped)"
+        default: ""
+      dry_run:
+        description: "Write to local _lake/ + artifact instead of S3"
+        type: boolean
+        default: false
+  schedule:
+    # 22:30 UTC — after the US close, before the Sydney morning consumers.
+    - cron: "30 22 * * 1-5"
+
+concurrency: ingest-otc
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          if [ -d market-ingestion ]; then cd market-ingestion; fi
+          pip install -r requirements.txt
+
+      - name: Offline selftest
+        run: |
+          if [ -d market-ingestion ]; then cd market-ingestion; fi
+          python -m ingestion.selftest
+
+      - name: Ingest
+        run: |
+          if [ -d market-ingestion ]; then cd market-ingestion; fi
+          ARGS="--market otc"
+          [ -n "${{ inputs.max_docs }}" ] && ARGS="$ARGS --max-docs ${{ inputs.max_docs }}"
+          [ "${{ inputs.dry_run }}" = "true" ] && ARGS="$ARGS --dry-run"
+          xvfb-run --auto-servernum python -m ingestion.run $ARGS
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_BUCKET_NAME: ${{ secrets.AWS_BUCKET_NAME }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          S3_LAKE_PREFIX: "market-data/"
+
+      - name: Upload dry-run lake
+        if: inputs.dry_run == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: lake-otc-${{ github.run_id }}
+          path: "**/_lake/"
+          if-no-files-found: warn

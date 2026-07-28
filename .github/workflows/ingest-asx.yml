@@ -1,0 +1,69 @@
+name: Ingest ASX
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_docs:
+        description: "Cap documents this run (blank = uncapped)"
+        default: ""
+      dry_run:
+        description: "Write to local _lake/ + artifact instead of S3"
+        type: boolean
+        default: false
+  schedule:
+    # 00:35 UTC = 10:35 Sydney (AEST) / 11:35 (AEDT) — always after the open.
+    - cron: "35 0 * * 1-5"
+
+concurrency: ingest-asx
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          if [ -d market-ingestion ]; then cd market-ingestion; fi
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Restore ASX cookie state
+        uses: actions/cache@v4
+        with:
+          path: "**/asx_storage.json"
+          key: asx-storage-${{ github.run_id }}
+          restore-keys: |
+            asx-storage-
+
+      - name: Offline selftest
+        run: |
+          if [ -d market-ingestion ]; then cd market-ingestion; fi
+          python -m ingestion.selftest
+
+      - name: Ingest
+        run: |
+          if [ -d market-ingestion ]; then cd market-ingestion; fi
+          ARGS="--market asx"
+          [ -n "${{ inputs.max_docs }}" ] && ARGS="$ARGS --max-docs ${{ inputs.max_docs }}"
+          [ "${{ inputs.dry_run }}" = "true" ] && ARGS="$ARGS --dry-run"
+          xvfb-run --auto-servernum python -m ingestion.run $ARGS
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_BUCKET_NAME: ${{ secrets.AWS_BUCKET_NAME }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          S3_LAKE_PREFIX: "market-data/"
+
+      - name: Upload dry-run lake
+        if: inputs.dry_run == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: lake-asx-${{ github.run_id }}
+          path: "**/_lake/"
+          if-no-files-found: warn

@@ -1,0 +1,6 @@
+__pycache__/
+_lake/
+downloads/
+asx_storage.json
+otc_debug_*
+*.pyc
