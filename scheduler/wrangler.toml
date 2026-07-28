@@ -1,0 +1,15 @@
+name = "actions-scheduler"
+main = "src/worker.js"
+compatibility_date = "2026-07-01"
+
+# ONE trigger, forever. The Worker wakes every minute and decides which repos
+# are due based on each target's own timezone/time (see src/worker.js). Adding a
+# repo never requires touching this — just edit TARGETS.
+# (Deploying from the Cloudflare dashboard instead? Add this same single string
+# under Worker → Settings → Triggers → Cron Triggers.)
+[triggers]
+crons = ["* * * * *"]
+
+# Secrets are NOT stored here. Set them with:
+#   wrangler secret put GH_PAT           (required)
+#   wrangler secret put TRIGGER_SECRET   (optional, guards the manual fetch endpoint)

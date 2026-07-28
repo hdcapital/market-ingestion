@@ -104,7 +104,7 @@ rewrites the file.
   2,000 free Actions minutes; making this repo public (it holds no secrets
   and only public-market data) makes minutes unlimited, as with
   `investegate-scraper`.
-- **Timing is owned by the Cloudflare Worker scheduler** (`asx-analyst/scheduler`),
+- **Timing is owned by the Cloudflare Worker scheduler** (`scheduler/` in this repo),
   which fires each ingest via `workflow_dispatch` at: ASX 00:35, UK 21:45,
   US 22:15, OTC 22:30 (UTC, weekdays). GitHub `schedule:` crons were removed —
   GitHub silently never fired them for this repo. The monthly compact job keeps
