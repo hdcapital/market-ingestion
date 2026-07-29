@@ -42,9 +42,11 @@ const TARGETS = [
   // asx-analyst is retired: global-analyst now screens ASX (and UK/US/OTC) by
   // reading the market-ingestion lake, so it fires twice a day instead:
   //
-  // ~30 min after the ASX ingest (00:35 UTC weekdays) — same-day ASX ideas.
+  // ~55 min after the ASX ingest starts (00:35 UTC weekdays) — same-day ASX
+  // ideas. Was 01:05, but a full ASX morning ingest takes 31-43 min and lost
+  // the race on day one (ingest finished 01:06:55, screener fired 01:05).
   { owner: "hdcapital", repo: "global-analyst", workflow: "daily.yml", ref: "main",
-    tz: "UTC", at: "01:05", days: [1, 2, 3, 4, 5] },
+    tz: "UTC", at: "01:30", days: [1, 2, 3, 4, 5] },
 
   // After the UK (21:45) / US (22:15) / OTC (22:30 + browser runtime) evening
   // ingests — the overnight UK/US/OTC ideas, Sun–Fri as the old 22:30 fire was.
