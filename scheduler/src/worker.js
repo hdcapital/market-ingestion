@@ -39,25 +39,21 @@ const TARGETS = [
   { owner: "hdcapital", repo: "market-ingestion", workflow: "ingest-otc.yml", ref: "main",
     tz: "UTC", at: "22:30", days: [1, 2, 3, 4, 5] },
 
-  // asx-analyst is retired: global-analyst now screens ASX (and UK/US/OTC) by
-  // reading the market-ingestion lake, so it fires twice a day instead:
-  //
-  // ~55 min after the ASX ingest starts (00:35 UTC weekdays) — same-day ASX
-  // ideas. Was 01:05, but a full ASX morning ingest takes 31-43 min and lost
-  // the race on day one (ingest finished 01:06:55, screener fired 01:05).
+  // --- the two lake CONSUMERS: ONE fire each per day, in the single window
+  // where the whole lake is fresh. At 01:30 UTC the day's ASX ingest (00:35,
+  // takes 31-50 min) has just finished AND last night's UK/US/OTC ingests
+  // (21:45/22:15/22:30) are ~3 hours old — so one run screens everything.
+  // Mon-Sat: the Saturday fire exists only so Friday's UK/US/OTC data isn't
+  // stuck waiting until Monday (there is no Saturday ASX; it reads as dupes).
+  // Pinned in UTC, not Sydney: the ingests are UTC-pinned, and a Sydney-local
+  // time would drift an hour against them at each DST change and race the
+  // ASX ingest for half the year.
   { owner: "hdcapital", repo: "global-analyst", workflow: "daily.yml", ref: "main",
-    tz: "UTC", at: "01:30", days: [1, 2, 3, 4, 5] },
+    tz: "UTC", at: "01:30", days: [1, 2, 3, 4, 5, 6] },
 
-  // After the UK (21:45) / US (22:15) / OTC (22:30 + browser runtime) evening
-  // ingests — the overnight UK/US/OTC ideas, Sun–Fri as the old 22:30 fire was.
-  { owner: "hdcapital", repo: "global-analyst", workflow: "daily.yml", ref: "main",
-    tz: "UTC", at: "23:05", days: [0, 1, 2, 3, 4, 5] },
-
-  // 11:10 Sydney, daily — AFTER the ASX lake ingest (00:35 UTC = ~10:35 Sydney),
-  // so the watchlist reads same-day ASX documents from the lake. Its old 10:07
-  // fire predated the lake and would see only yesterday's ASX.
+  // 5 min behind the screener, same window and rationale.
   { owner: "hdcapital", repo: "global-watchlist-openai", workflow: "daily_watchlist.yml", ref: "main",
-    tz: "Australia/Sydney", at: "11:10", days: null },
+    tz: "UTC", at: "01:35", days: [1, 2, 3, 4, 5, 6] },
 
   // 07:45 London, daily — DST handled automatically (was BST/GMT dual-cron).
   { owner: "hdcapital", repo: "investegate-scraper", workflow: "morning.yml", ref: "main",
