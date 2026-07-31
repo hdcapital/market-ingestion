@@ -26,9 +26,9 @@
 const TARGETS = [
   // --- market-ingestion (the S3 lake): the four daily scrapes. GitHub's
   // schedule: event silently never fired for this repo, so the Worker owns
-  // the timing. Pinned in UTC deliberately: the global-analyst fires below
-  // (01:05 / 23:05 UTC) are sequenced ~30 min after these and that spacing
-  // must hold in both hemispheres' DST. Re-running an ingest is always safe
+  // the timing. Pinned in UTC deliberately: the consumer fires below
+  // (01:30 / 01:35 UTC) are sequenced against these and that spacing must
+  // hold in both hemispheres' DST. Re-running an ingest is always safe
   // (the lake dedupes), so manual catch-up dispatches need no special care.
   { owner: "hdcapital", repo: "market-ingestion", workflow: "ingest-asx.yml", ref: "main",
     tz: "UTC", at: "00:35", days: [1, 2, 3, 4, 5] },
