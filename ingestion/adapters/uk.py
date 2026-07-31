@@ -39,7 +39,10 @@ def ingest(store, max_docs=None):
     stats = {"collected": 0, "written": 0, "skipped_seen": 0, "errors": 0}
     errors, entries = [], []
 
-    pages = 1 if (max_docs and max_docs <= 20) else int(os.environ.get("UK_PAGES", "3"))
+    # 5 pages x 300 = 1,500-item window: 3 pages hit its 900 cap two days
+    # running with ~500 new items/day, leaving too little overlap headroom
+    # for a heavy RNS morning. The seen-set dedupe makes the extra depth free.
+    pages = 1 if (max_docs and max_docs <= 20) else int(os.environ.get("UK_PAGES", "5"))
     per_page = 100 if (max_docs and max_docs <= 20) else int(os.environ.get("UK_PER_PAGE", "300"))
 
     items, session = uk_scraper.collect_uk_announcements(pages=pages, per_page=per_page)

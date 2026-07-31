@@ -34,15 +34,23 @@ const TARGETS = [
     tz: "UTC", at: "00:35", days: [1, 2, 3, 4, 5] },
   { owner: "hdcapital", repo: "market-ingestion", workflow: "ingest-uk.yml", ref: "main",
     tz: "UTC", at: "21:45", days: [1, 2, 3, 4, 5] },
+  // US runs AFTER EDGAR publishes the daily form index (~02:00 UTC for the
+  // prior US trading day). At the old 22:15 slot the same-day index never
+  // existed yet, so every run ingested a day late and one quiet overlap
+  // produced a misleading ok_empty marker on a busy weekday. Tue-Sat at
+  // 02:30 UTC ingests Mon-Fri filings within ~30 min of the index landing.
   { owner: "hdcapital", repo: "market-ingestion", workflow: "ingest-us.yml", ref: "main",
-    tz: "UTC", at: "22:15", days: [1, 2, 3, 4, 5] },
+    tz: "UTC", at: "02:30", days: [2, 3, 4, 5, 6] },
   { owner: "hdcapital", repo: "market-ingestion", workflow: "ingest-otc.yml", ref: "main",
     tz: "UTC", at: "22:30", days: [1, 2, 3, 4, 5] },
 
   // --- the two lake CONSUMERS: ONE fire each per day, in the single window
   // where the whole lake is fresh. At 01:30 UTC the day's ASX ingest (00:35,
-  // takes 31-50 min) has just finished AND last night's UK/US/OTC ingests
-  // (21:45/22:15/22:30) are ~3 hours old — so one run screens everything.
+  // takes 31-50 min) has just finished AND last night's UK/OTC ingests
+  // (21:45/22:30) are ~3 hours old. US ingests at 02:30 UTC (after these
+  // fires — EDGAR's daily index isn't published until ~02:00), so consumers
+  // read US from the previous 02:30 run; moving these fires to ~03:10 would
+  // gain a day of US freshness at the cost of staler ASX-open timing.
   // Mon-Sat: the Saturday fire exists only so Friday's UK/US/OTC data isn't
   // stuck waiting until Monday (there is no Saturday ASX; it reads as dupes).
   // Pinned in UTC, not Sydney: the ingests are UTC-pinned, and a Sydney-local

@@ -4,10 +4,17 @@ Ad-hoc SQL over the lake with DuckDB.
 
   QUERY_SQL='SELECT count(*) FROM docs' python -m ingestion.query
 
-Exposes one view, `docs` — every document JSON in the lake (all markets,
-all dates), with the canonical nested structure (company.ticker,
-content.text, flags.is_admin_noise, ...). Results are printed to the log
-(truncated for readability) and written in full to query_results.csv.
+Exposes two views:
+  docs         — document JSONs with the canonical nested structure
+                 (company.ticker, content.text, flags.is_admin_noise, ...).
+                 QUERY_MARKET / QUERY_MONTH (YYYY-MM) narrow the glob; leave
+                 both unset for the whole lake, but note a full scan grows
+                 with the lake and can exceed the workflow timeout.
+  docs_compact — the monthly parquet rollups (flat columns: ticker, text,
+                 is_admin_noise, ...), created only if parquet exists for
+                 the selected market/month. Fast — prefer it for history.
+Results are printed to the log (truncated for readability) and written in
+full to query_results.csv.
 
 Intended to be driven by .github/workflows/query.yml, which supplies the
 SQL as a workflow_dispatch input and uploads the CSV as an artifact.
@@ -40,7 +47,22 @@ def main() -> int:
     con.execute(f"SET s3_access_key_id='{os.environ['AWS_ACCESS_KEY_ID']}'")
     con.execute(f"SET s3_secret_access_key='{os.environ['AWS_SECRET_ACCESS_KEY']}'")
 
-    glob = f"s3://{bucket}/{prefix}documents/*/*/*/*/*.json"
+    # Optional narrowing: scanning every document JSON in the lake stopped
+    # fitting the workflow timeout within days of go-live, so the docs view
+    # can be restricted to one market and/or one month.
+    market = (os.environ.get("QUERY_MARKET") or "").strip() or "*"
+    month = (os.environ.get("QUERY_MONTH") or "").strip()  # YYYY-MM
+    if month:
+        try:
+            y, m = month.split("-")
+            date_glob = f"{y}/{m}"
+        except ValueError:
+            print(f"Bad month {month!r} — expected YYYY-MM.")
+            return 2
+    else:
+        date_glob = "*/*"
+
+    glob = f"s3://{bucket}/{prefix}documents/{market}/{date_glob}/*/*.json"
     print(f"Building docs view over {glob} ...")
     con.execute(f"""
         CREATE VIEW docs AS
@@ -48,6 +70,17 @@ def main() -> int:
                                      union_by_name=true,
                                      maximum_object_size=33554432)
     """)
+
+    # Compacted history: one flat parquet per market-month (see compact.py for
+    # columns — text, ticker, is_admin_noise etc. are top-level, not nested).
+    # Prefer this view for anything spanning past months; it scans in seconds.
+    pq_glob = f"s3://{bucket}/{prefix}compact/{market}/{month or '*'}.parquet"
+    try:
+        con.execute(
+            f"CREATE VIEW docs_compact AS SELECT * FROM read_parquet('{pq_glob}')")
+        print(f"docs_compact view over {pq_glob}")
+    except Exception as e:
+        print(f"(docs_compact view unavailable — no parquet at {pq_glob}: {e})")
 
     print(f"Running query:\n{sql}\n")
     rel = con.sql(sql)

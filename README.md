@@ -9,7 +9,7 @@ watchlists, monitors) reads one store instead of scraping the same sites again.
 |---|---|---|---|
 | `asx` | asx.com.au today + previous-business-day announcements (Playwright + PDF) | `asx-analyst` (verbatim) | 00:35 Mon–Fri |
 | `uk`  | Investegate RNS (HTTP) | `global-analyst/uk_scraper.py` (verbatim) | 21:45 Mon–Fri |
-| `us`  | SEC EDGAR daily form index (HTTP) | `global-analyst/us_scraper.py` (verbatim) | 22:15 Mon–Fri |
+| `us`  | SEC EDGAR daily form index (HTTP) | `global-analyst/us_scraper.py` (verbatim) | 02:30 Tue–Sat (EDGAR posts day D's index ~02:00 UTC on D+1) |
 | `otc` | otcmarkets.com news (Selenium) | `global-analyst/otc_scraper.py` (verbatim) | 22:30 Mon–Fri |
 
 The scraper modules in `ingestion/scrapers/` are copied **verbatim** from the
@@ -87,6 +87,12 @@ stay under documents/ (the parquet's raw_key column points at them).
 Compaction runs automatically on the 2nd of each month for the previous
 month (see ingest schedules below); re-running a month is safe and simply
 rewrites the file.
+
+No local sync handy? The "Query lake" workflow (`query.yml`) runs DuckDB SQL
+in Actions against two views: `docs` (document JSONs, nested structure) and
+`docs_compact` (the monthly parquet, flat columns, much faster). Pass the
+`market` and/or `month` inputs to narrow the scan — an unrestricted `docs`
+scan grows with the lake and can run long.
 
 ## Operational notes
 
