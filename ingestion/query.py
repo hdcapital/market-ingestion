@@ -77,7 +77,7 @@ def main() -> int:
             pfx += f"{market}/"
             if month:
                 pfx += f"{date_glob}/"
-        keys, skipped = [], 0
+        candidates, skipped = [], 0
         for page in s3.get_paginator("list_objects_v2").paginate(
                 Bucket=bucket, Prefix=pfx):
             for o in page.get("Contents", []):
@@ -90,12 +90,34 @@ def main() -> int:
                     skipped += 1
                     print(f"  (skipping zero-byte object: {k})")
                     continue
-                keys.append(f"s3://{bucket}/{k}")
+                candidates.append(k)
+
+        # Size alone is not enough: whitespace-only or otherwise non-JSON
+        # content also aborts read_json_auto with a Conversion Error. Peek at
+        # the first bytes of every object and keep only ones that start '{'.
+        from concurrent.futures import ThreadPoolExecutor
+
+        def head_ok(key):
+            try:
+                r = s3.get_object(Bucket=bucket, Key=key, Range="bytes=0-15")
+                return key, r["Body"].read().lstrip().startswith(b"{")
+            except Exception as e:
+                print(f"  (head check failed, skipping {key}: {e})")
+                return key, False
+
+        keys = []
+        with ThreadPoolExecutor(max_workers=16) as ex:
+            for key, ok in ex.map(head_ok, candidates):
+                if ok:
+                    keys.append(f"s3://{bucket}/{key}")
+                else:
+                    skipped += 1
+                    print(f"  (skipping non-JSON object: {key})")
         if not keys:
             print(f"No document objects under {pfx} — nothing to query.")
             return 2
         src = "[" + ", ".join(f"'{k}'" for k in keys) + "]"
-        print(f"{len(keys)} document files listed ({skipped} zero-byte skipped)")
+        print(f"{len(keys)} document files usable ({skipped} skipped)")
     except ImportError:
         print("(boto3 not installed — using glob; zero-byte objects will abort the scan)")
 
