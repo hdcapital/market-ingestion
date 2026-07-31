@@ -29,7 +29,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install DuckDB
-        run: pip install duckdb
+        run: pip install duckdb boto3
 
       - name: Run query
         run: python -m ingestion.query

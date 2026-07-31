@@ -63,10 +63,46 @@ def main() -> int:
         date_glob = "*/*"
 
     glob = f"s3://{bucket}/{prefix}documents/{market}/{date_glob}/*/*.json"
+
+    # Zero-byte objects abort DuckDB's JSON reader even with ignore_errors
+    # (it raises a Conversion Error, which that flag does not cover). When
+    # boto3 is available, enumerate the real objects and hand DuckDB an
+    # explicit list with empties skipped; otherwise fall back to the glob.
+    src = f"'{glob}'"
+    try:
+        import boto3
+        s3 = boto3.client("s3")
+        pfx = f"{prefix}documents/"
+        if market != "*":
+            pfx += f"{market}/"
+            if month:
+                pfx += f"{date_glob}/"
+        keys, skipped = [], 0
+        for page in s3.get_paginator("list_objects_v2").paginate(
+                Bucket=bucket, Prefix=pfx):
+            for o in page.get("Contents", []):
+                k = o["Key"]
+                if not k.endswith(".json"):
+                    continue
+                if month and f"/{date_glob}/" not in f"/{k}":
+                    continue
+                if o["Size"] == 0:
+                    skipped += 1
+                    print(f"  (skipping zero-byte object: {k})")
+                    continue
+                keys.append(f"s3://{bucket}/{k}")
+        if not keys:
+            print(f"No document objects under {pfx} — nothing to query.")
+            return 2
+        src = "[" + ", ".join(f"'{k}'" for k in keys) + "]"
+        print(f"{len(keys)} document files listed ({skipped} zero-byte skipped)")
+    except ImportError:
+        print("(boto3 not installed — using glob; zero-byte objects will abort the scan)")
+
     print(f"Building docs view over {glob} ...")
     con.execute(f"""
         CREATE VIEW docs AS
-        SELECT * FROM read_json_auto('{glob}',
+        SELECT * FROM read_json_auto({src},
                                      union_by_name=true,
                                      ignore_errors=true,
                                      maximum_object_size=33554432)
