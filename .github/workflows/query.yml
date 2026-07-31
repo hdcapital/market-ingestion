@@ -19,6 +19,8 @@ jobs:
   query:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -48,3 +50,20 @@ jobs:
           name: query-results-${{ github.run_id }}
           path: query_results.csv
           if-no-files-found: ignore
+
+      # Artifact downloads live on Azure blob storage, which some restricted
+      # clients (e.g. proxied Claude Code sessions) cannot reach. Publish the
+      # CSV to a throwaway orphan branch too, so results are fetchable over
+      # plain git. Prune query-results/* branches whenever.
+      - name: Publish results to branch
+        if: always()
+        run: |
+          [ -f query_results.csv ] || exit 0
+          git config user.name "query-bot"
+          git config user.email "actions@github.com"
+          BR="query-results/${{ github.run_id }}"
+          git checkout --orphan "$BR"
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          git add -f query_results.csv
+          git commit -q -m "Query results for run ${{ github.run_id }}"
+          git push -f origin "$BR"
