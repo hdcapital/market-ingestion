@@ -68,6 +68,7 @@ def main() -> int:
         CREATE VIEW docs AS
         SELECT * FROM read_json_auto('{glob}',
                                      union_by_name=true,
+                                     ignore_errors=true,
                                      maximum_object_size=33554432)
     """)
 
