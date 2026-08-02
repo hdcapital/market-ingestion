@@ -121,13 +121,34 @@ def main() -> int:
     except ImportError:
         print("(boto3 not installed — using glob; zero-byte objects will abort the scan)")
 
+    # Explicit schema (mirrors lake.build_doc): schema inference across
+    # thousands of files can type an inconsistent column as JSON, and an
+    # empty-string value in a JSON-typed column aborts the whole query with
+    # "Malformed JSON ... input length is 0". Fixed columns sidestep that.
     print(f"Building docs view over {glob} ...")
     con.execute(f"""
         CREATE VIEW docs AS
-        SELECT * FROM read_json_auto({src},
-                                     union_by_name=true,
-                                     ignore_errors=true,
-                                     maximum_object_size=33554432)
+        SELECT * FROM read_json({src},
+            format='auto',
+            ignore_errors=true,
+            maximum_object_size=33554432,
+            columns={{
+                'schema_version': 'BIGINT',
+                'doc_id': 'VARCHAR',
+                'market': 'VARCHAR',
+                'source': 'VARCHAR',
+                'url': 'VARCHAR',
+                'published_at': 'VARCHAR',
+                'published_date': 'VARCHAR',
+                'scraped_at': 'VARCHAR',
+                'company': 'STRUCT(ticker VARCHAR, exchange_qualified VARCHAR, name VARCHAR, cik VARCHAR)',
+                'doc_type': 'VARCHAR',
+                'form': 'VARCHAR',
+                'title': 'VARCHAR',
+                'content': 'STRUCT(text VARCHAR, text_sha256 VARCHAR, extraction VARCHAR, raw_key VARCHAR, truncated BOOLEAN)',
+                'flags': 'STRUCT(is_admin_noise BOOLEAN, noise_rule VARCHAR)',
+                'scraper': 'STRUCT(repo VARCHAR, version VARCHAR, run_id VARCHAR)'
+            }})
     """)
 
     # Compacted history: one flat parquet per market-month (see compact.py for
