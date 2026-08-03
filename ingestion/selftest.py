@@ -3,11 +3,16 @@
 no network, no S3. Run with `python -m ingestion.selftest`. Exits non-zero on
 any failure so it can gate CI before live scraping starts."""
 
+import datetime
 import shutil
 import sys
 import tempfile
 
 from . import lake
+
+# Fixture dates must stay inside load_seen_ids' lookback window, so they are
+# derived from the real clock rather than hardcoded.
+TODAY = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
 
 
 def main() -> int:
@@ -22,8 +27,8 @@ def main() -> int:
 
     doc = lake.build_doc(
         market="uk", source="investegate-rns", native_id="9999999",
-        url="https://example.com/a/9999999", published_at="2026-07-27T08:00:00",
-        published_date="2026-07-27", ticker="TST", title="Test Results",
+        url="https://example.com/a/9999999", published_at=f"{TODAY}T08:00:00",
+        published_date=TODAY, ticker="TST", title="Test Results",
         text="hello world " * 50, extraction="html",
         is_admin_noise=False,
     )
@@ -34,8 +39,8 @@ def main() -> int:
 
     pdf_doc = lake.build_doc(
         market="asx", source="asx-announcements", native_id="a" * 32,
-        url="https://example.com/pdf", published_at="2026-07-27",
-        published_date="2026-07-27", ticker="TST", title="Quarterly",
+        url="https://example.com/pdf", published_at=TODAY,
+        published_date=TODAY, ticker="TST", title="Quarterly",
         text="pdf text", extraction="pdf-pymupdf",
     )
     check("write_document with raw", lake.write_document(store, pdf_doc, raw_bytes=b"%PDF-fake"))
@@ -43,12 +48,12 @@ def main() -> int:
     check("raw sidecar readable", store.get_bytes(pdf_doc["content"]["raw_key"]) == b"%PDF-fake")
 
     entries = [lake.manifest_entry(doc), lake.manifest_entry(pdf_doc)]
-    mkey = lake.append_manifest(store, "uk", "2026-07-27", entries[:1])
-    lake.append_manifest(store, "uk", "2026-07-27", entries[:1])  # idempotent re-append
+    mkey = lake.append_manifest(store, "uk", TODAY, entries[:1])
+    lake.append_manifest(store, "uk", TODAY, entries[:1])  # idempotent re-append
     lines = store.get_bytes(mkey).decode().strip().splitlines()
     check("manifest idempotent", len(lines) == 1)
 
-    dkey = lake.write_done_marker(store, "uk", "2026-07-27", status="ok",
+    dkey = lake.write_done_marker(store, "uk", TODAY, status="ok",
                                   counts={"written": 1}, errors=[],
                                   started_at=lake.utcnow_iso())
     marker = store.get_json(dkey)
@@ -56,7 +61,7 @@ def main() -> int:
 
     big = lake.build_doc(
         market="us", source="sec-edgar-daily-index", native_id="0000000000-26-000001",
-        url="https://example.com", published_at="2026-07-27", published_date="2026-07-27",
+        url="https://example.com", published_at=TODAY, published_date=TODAY,
         text="x" * (lake.MAX_DOC_TEXT_CHARS + 10), extraction="sgml-strip",
     )
     check("oversize text truncated+flagged",
