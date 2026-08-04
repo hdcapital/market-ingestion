@@ -62,14 +62,24 @@ SLEEP_SECONDS = float(os.environ.get("SEC_SLEEP_SECONDS", "0.25"))
 #   15-12B / 15-12G   : deregistration / going dark
 # Foreign private issuers' 6-K/20-F/40-F are intentionally omitted (see module
 # docstring). Override via the US_FORMS env.
-US_FORMS = set(
-    f.strip().upper()
-    for f in os.environ.get(
-        "US_FORMS",
-        "8-K,8-K/A,10-K,10-K/A,10-Q,10-Q/A,"
-        "SC TO-I,SC TO-T,SC 14D9,SC 13D,SC 13D/A,SC 13E3,25,25-NSE,15-12B,15-12G").split(",")
-    if f.strip()
-)
+US_FORMS_DEFAULT = ("8-K,8-K/A,10-K,10-K/A,10-Q,10-Q/A,"
+                    "SC TO-I,SC TO-T,SC 14D9,SC 13D,SC 13D/A,SC 13E3,"
+                    "25,25-NSE,15-12B,15-12G")
+
+
+def parse_forms(raw) -> set:
+    """Comma-separated form list -> normalised set. Empty input -> empty set."""
+    return {f.strip().upper() for f in (raw or "").split(",") if f.strip()}
+
+
+# Fall back to the default whenever the env yields NO usable form — unset,
+# empty, whitespace-only or all-separators. Testing the PARSED set (rather
+# than the raw string) matters because an empty set is silent: every filing is
+# skipped, the run writes an ok_empty marker, and a lost day of EDGAR becomes
+# indistinguishable from a genuine weekend. A blank env value is the normal
+# case, not an exotic one — GitHub Actions sets an env var to "" for a blank
+# workflow input or an undefined repo variable.
+US_FORMS = parse_forms(os.environ.get("US_FORMS")) or parse_forms(US_FORMS_DEFAULT)
 
 # Forms that are terse regulatory notifications where the form's EXISTENCE is
 # the event (a Form 25 delisting can be a page of checkboxes). These bypass the

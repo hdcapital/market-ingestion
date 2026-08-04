@@ -67,6 +67,20 @@ def main() -> int:
     check("oversize text truncated+flagged",
           big["content"]["truncated"] and len(big["content"]["text"]) == lake.MAX_DOC_TEXT_CHARS)
 
+    # Regression (2026-08): a present-but-empty US_FORMS env parsed to an empty
+    # set, so every filing was skipped and the run wrote an ok_empty marker —
+    # a lost day of EDGAR looking exactly like a weekend. Blank values are the
+    # normal case in Actions (unset repo variable, blank workflow input).
+    from .scrapers import us_scraper as us
+    check("blank US_FORMS parses to nothing",
+          all(us.parse_forms(v) == set() for v in (None, "", "   ", ",")))
+    check("blank US_FORMS falls back to the default list",
+          all((us.parse_forms(v) or us.parse_forms(us.US_FORMS_DEFAULT))
+              == us.parse_forms(us.US_FORMS_DEFAULT) for v in (None, "", "   ")))
+    check("US_FORMS is never empty", bool(us.US_FORMS) and "8-K" in us.US_FORMS)
+    check("explicit US_FORMS override still wins",
+          us.parse_forms(" sc 13d/a , 8-K ") == {"SC 13D/A", "8-K"})
+
     shutil.rmtree(root, ignore_errors=True)
     print(f"\nSELFTEST: {'PASS' if not failures else 'FAIL ' + str(failures)}")
     return 0 if not failures else 1
