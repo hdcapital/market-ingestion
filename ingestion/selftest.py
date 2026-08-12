@@ -81,6 +81,35 @@ def main() -> int:
     check("explicit US_FORMS override still wins",
           us.parse_forms(" sc 13d/a , 8-K ") == {"SC 13D/A", "8-K"})
 
+    # Regression (2026-08-10): SEC 403-blocked every request from the runner,
+    # zero filings were collected, and the run still wrote an ok_empty marker —
+    # a lost day of EDGAR looking exactly like a weekend. A blocked index day
+    # must fail an empty run; deterministic 404s (real weekends) must not.
+    from .adapters import us as us_adapter
+    blocked_day = [{"date": TODAY, "disposition": "blocked: HTTP 403 x4"}]
+    weekend_days = [{"date": TODAY, "disposition": "missing: HTTP 404"},
+                    {"date": TODAY, "disposition": "missing: HTTP 404"}]
+    check("blocked index day fails an empty run",
+          us_adapter.empty_collection_status(blocked_day) == "failed")
+    check("404ed weekend still reads ok_empty",
+          us_adapter.empty_collection_status(weekend_days) == "ok_empty")
+    check("mixed blocked+missing still fails",
+          us_adapter.empty_collection_status(weekend_days + blocked_day) == "failed")
+
+    # collect_us_filings offline: every fetch blocked -> no filings, and every
+    # day note says so (monkeypatched transport; no network involved).
+    orig_get = us.http_get_with_disposition
+    us.http_get_with_disposition = (
+        lambda session, url, **kw: (None, "blocked: HTTP 403 x4"))
+    try:
+        filings, day_notes = us.collect_us_filings()
+    finally:
+        us.http_get_with_disposition = orig_get
+    check("blocked collect returns no filings", filings == [])
+    check("blocked collect reports every lookback day",
+          len(day_notes) == us.US_LOOKBACK_DAYS + 1
+          and all(n["disposition"].startswith("blocked") for n in day_notes))
+
     shutil.rmtree(root, ignore_errors=True)
     print(f"\nSELFTEST: {'PASS' if not failures else 'FAIL ' + str(failures)}")
     return 0 if not failures else 1
