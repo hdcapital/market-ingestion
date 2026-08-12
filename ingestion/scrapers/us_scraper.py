@@ -85,8 +85,14 @@ US_FORMS = parse_forms(os.environ.get("US_FORMS")) or parse_forms(US_FORMS_DEFAU
 # the event (a Form 25 delisting can be a page of checkboxes). These bypass the
 # minimum-body-length guard so they still reach the model.
 TERSE_EVENT_FORMS = {"25", "25-NSE", "15-12B", "15-12G", "SC 13D", "SC 13E3"}
-US_LOOKBACK_DAYS = int(os.environ.get("US_LOOKBACK_DAYS", "2"))
-MAX_US_FILINGS = int(os.environ.get("MAX_US_FILINGS", "1500"))
+# `or` (not get's default) so a blank env value — a blank workflow input, or a
+# schedule-triggered run where inputs resolve to "" — falls back instead of
+# crashing int(). Lookback 3 (not 2) so the harvest survives two consecutive
+# lost runs: with the 02:30 UTC Tue-Sat schedule each trading day's index is
+# inside the window of the next three runs, and one blocked/dropped run no
+# longer leaves a permanent hole.
+US_LOOKBACK_DAYS = int(os.environ.get("US_LOOKBACK_DAYS") or "3")
+MAX_US_FILINGS = int(os.environ.get("MAX_US_FILINGS") or "1500")
 
 # SIC (industry) pre-filter — drop a filing BEFORE downloading or paying the LLM
 # when the company's SIC code marks it as a structural hard-exclusion the model
@@ -222,23 +228,49 @@ ADMIN_ONLY_ITEMS = {"5.07", "5.03", "3.03", "5.08", "7.01", "9.01"}
 _ITEM_RE = re.compile(r"\bItem\s+(\d{1,2}\.\d{2})", re.IGNORECASE)
 
 
-def http_get_with_retry(session: requests.Session, url: str, *, params=None,
-                        timeout=DOWNLOAD_TIMEOUT, label="") -> Optional[requests.Response]:
-    """Lifted retry pattern from app10.py."""
+def http_get_with_disposition(session: requests.Session, url: str, *, params=None,
+                              timeout=DOWNLOAD_TIMEOUT, label=""):
+    """(response, disposition) — retry pattern from app10.py, plus an honest
+    account of WHY a fetch came back empty:
+
+      "ok"                        200 response returned
+      "missing: HTTP <code>"      deterministic non-retryable answer (a 404ed
+                                  weekend/holiday daily index is a real answer)
+      "blocked: <detail>"         retries exhausted on 403/429/5xx or network
+                                  errors — the server refused us; the resource
+                                  may well exist and the day is NOT safe to
+                                  treat as empty
+
+    The distinction matters because SEC intermittently 403-blocks datacenter
+    IPs (GitHub runners included): on 2026-08-10 every index fetch was blocked
+    and the run still wrote an ok_empty marker, making a lost day of EDGAR
+    look exactly like a weekend.
+    """
+    detail = "no attempt made"
     for attempt in range(1, HTTP_MAX_RETRIES + 1):
         try:
             r = session.get(url, params=params, timeout=timeout,
                             headers={"User-Agent": SEC_USER_AGENT})
             if r.status_code == 200:
-                return r
+                return r, "ok"
             if r.status_code in (403, 429, 500, 502, 503, 504):
+                detail = f"HTTP {r.status_code} x{attempt}"
                 time.sleep(HTTP_BACKOFF_SECONDS * attempt)
                 continue
-            return None
-        except Exception:
+            return None, f"missing: HTTP {r.status_code}"
+        except Exception as e:
+            detail = f"{type(e).__name__} x{attempt}"
             time.sleep(HTTP_BACKOFF_SECONDS * attempt)
-    print(f"      [!] Giving up on {label or url}")
-    return None
+    print(f"      [!] Giving up on {label or url} ({detail})")
+    return None, f"blocked: {detail}"
+
+
+def http_get_with_retry(session: requests.Session, url: str, *, params=None,
+                        timeout=DOWNLOAD_TIMEOUT, label="") -> Optional[requests.Response]:
+    """Response-only wrapper for callers that don't need the disposition."""
+    r, _ = http_get_with_disposition(session, url, params=params,
+                                     timeout=timeout, label=label)
+    return r
 
 
 def _accession_nodash(accession: str) -> str:
@@ -309,24 +341,31 @@ def load_cik_ticker_map(session: requests.Session) -> Dict[str, str]:
         return {}
 
 
-def collect_us_filings() -> List[Dict[str, Any]]:
+def collect_us_filings():
     """
-    Walk the EDGAR daily form index for the last US_LOOKBACK_DAYS and return:
-      [{id (accession), cik, ticker, company, form, date, url}, ...]
-    Weekends/holidays 404 and are skipped silently. Dedupe across days is by
-    accession number; S3-level dedupe in main.py makes the overlap free.
+    Walk the EDGAR daily form index for the last US_LOOKBACK_DAYS and return
+    (filings, day_notes):
+      filings   [{id (accession), cik, ticker, company, form, date, url}, ...]
+      day_notes [{"date": "YYYY-MM-DD", "disposition": "ok|missing…|blocked…"}]
+    Weekends/holidays 404 ("missing") and are skipped; a "blocked" day means
+    SEC refused the request and the caller must NOT treat the run as a clean
+    empty day. Dedupe across days is by accession number; S3-level dedupe in
+    the adapter makes the overlap free.
     """
     session = requests.Session()
     tickers = load_cik_ticker_map(session)
 
     filings: Dict[str, Dict[str, Any]] = {}
+    day_notes: List[Dict[str, str]] = []
     today_us = datetime.datetime.now(datetime.timezone.utc).date()
 
     for delta in range(US_LOOKBACK_DAYS + 1):
         d = today_us - datetime.timedelta(days=delta)
         url = (f"https://www.sec.gov/Archives/edgar/daily-index/"
                f"{d.year}/QTR{_quarter(d.month)}/form.{d.strftime('%Y%m%d')}.idx")
-        r = http_get_with_retry(session, url, label=f"daily index {d}")
+        r, disposition = http_get_with_disposition(session, url,
+                                                   label=f"daily index {d}")
+        day_notes.append({"date": d.isoformat(), "disposition": disposition})
         if r is None:
             continue
 
@@ -359,7 +398,7 @@ def collect_us_filings() -> List[Dict[str, Any]]:
     if MAX_US_FILINGS and len(out) > MAX_US_FILINGS:
         print(f"   ⚠️ Capping US filings at {MAX_US_FILINGS} of {len(out)} (raise MAX_US_FILINGS to widen).")
         out = out[:MAX_US_FILINGS]
-    return out
+    return out, day_notes
 
 
 def fetch_us_filing_text(filing: Dict[str, Any]) -> Optional[str]:

@@ -8,17 +8,36 @@ The lake stores every in-scope form; consumers apply their own exclusions.
 from .. import lake
 
 
+def empty_collection_status(day_notes) -> str:
+    """Status for a run that collected NOTHING from the daily indexes.
+
+    "ok_empty" only when every index day answered deterministically (404ed
+    weekend/holiday). If any day was BLOCKED (SEC 403/5xx, retries exhausted)
+    the day's harvest may exist and be unreachable, so the run must fail and
+    alert rather than write a marker that reads as a quiet weekend — the
+    2026-08-10 lesson, when SEC blocked every request from the runner and the
+    lost day was indistinguishable from a Saturday.
+    """
+    blocked = any(str(n.get("disposition", "")).startswith("blocked")
+                  for n in day_notes)
+    return "failed" if blocked else "ok_empty"
+
+
 def ingest(store, max_docs=None):
     from ..scrapers import us_scraper
 
     stats = {"collected": 0, "written": 0, "skipped_seen": 0, "errors": 0}
     errors, entries = [], []
 
-    filings = us_scraper.collect_us_filings()
+    filings, day_notes = us_scraper.collect_us_filings()
     stats["collected"] = len(filings)
+    # A blocked index day is worth recording even when other days delivered:
+    # the marker shows it, and the next runs' lookback gets two more shots.
+    for n in day_notes:
+        if str(n.get("disposition", "")).startswith("blocked"):
+            errors.append(f"daily index {n['date']}: {n['disposition']}")
     if not filings:
-        # Weekend/holiday indexes 404 — that is a legitimate empty day.
-        return stats, errors, entries, "ok_empty"
+        return stats, errors, entries, empty_collection_status(day_notes)
 
     seen = lake.load_seen_ids(store, "us")
     for f in filings:

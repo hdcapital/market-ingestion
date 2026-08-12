@@ -1,6 +1,14 @@
 name: Ingest US
 
 on:
+  # Belt-and-braces behind the Cloudflare Worker (which fires this at 02:30
+  # UTC Tue-Sat): GitHub's schedule: event is best-effort — late delivery and
+  # dropped runs are normal, and a Worker deploy gap cost the lake 2026-08-11
+  # entirely. A duplicate ingest is free (the lake dedupes by accession), a
+  # missed one loses a day, so redundancy is the right trade. Odd minute to
+  # dodge the congested :00/:30 marks where GitHub sheds scheduled load.
+  schedule:
+    - cron: "17 3 * * 2-6"
   workflow_dispatch:
     inputs:
       max_docs:
@@ -10,6 +18,12 @@ on:
         description: "Write to local _lake/ + artifact instead of S3"
         type: boolean
         default: false
+      lookback_days:
+        description: "Walk this many days of EDGAR daily index before today (blank = default). Raise for backfills."
+        default: ""
+      max_filings:
+        description: "Override the MAX_US_FILINGS cap for wide backfills (blank = 5000)"
+        default: ""
 
 concurrency: ingest-us
 
@@ -47,7 +61,10 @@ jobs:
           AWS_BUCKET_NAME: ${{ secrets.AWS_BUCKET_NAME }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
           S3_LAKE_PREFIX: "market-data/"
-          MAX_US_FILINGS: "5000"
+          # Blank on scheduled runs (inputs are empty there) — the scraper
+          # falls back to its own defaults on blank values.
+          MAX_US_FILINGS: "${{ inputs.max_filings || '5000' }}"
+          US_LOOKBACK_DAYS: "${{ inputs.lookback_days }}"
 
       - name: Upload dry-run lake
         if: inputs.dry_run == true
