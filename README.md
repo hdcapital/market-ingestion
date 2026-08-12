@@ -112,6 +112,10 @@ scan grows with the lake and can run long.
   `investegate-scraper`.
 - **Timing is owned by the Cloudflare Worker scheduler** (`scheduler/` in this repo),
   which fires each ingest via `workflow_dispatch` at: ASX 00:35, UK 21:45,
-  US 22:15, OTC 22:30 (UTC, weekdays). GitHub `schedule:` crons were removed —
-  GitHub silently never fired them for this repo. The monthly compact job keeps
-  its GitHub cron (a late fire is harmless there).
+  OTC 22:30 (UTC, Mon–Fri) and US 02:30 (UTC, Tue–Sat — EDGAR posts day D's
+  index ~02:00 UTC on D+1). GitHub `schedule:` crons were removed for the
+  other markets — GitHub silently never fired them for this repo — but
+  `ingest-us.yml` keeps one at 03:17 UTC Tue–Sat as a fallback behind the
+  Worker: a duplicate ingest is free (the lake dedupes), a missed one loses a
+  day (the 2026-08-11 Worker-migration gap cost the lake a whole US day). The
+  monthly compact job keeps its GitHub cron (a late fire is harmless there).
