@@ -57,22 +57,35 @@ const TARGETS = [
   { owner: "hdcapital", repo: "market-ingestion", workflow: "ingest-otc.yml", ref: "main",
     tz: "UTC", at: "22:30", days: [1, 2, 3, 4, 5] },
 
-  // --- the two lake CONSUMERS: ONE fire each per day, in the single window
-  // where the whole lake is fresh. At 01:30 UTC the day's ASX ingest (00:35,
-  // takes 31-50 min) has just finished AND last night's UK/OTC ingests
-  // (21:45/22:30) are ~3 hours old. US ingests at 02:30 UTC (after these
-  // fires — EDGAR's daily index isn't published until ~02:00), so consumers
-  // read US from the previous 02:30 run; moving these fires to ~03:10 would
-  // gain a day of US freshness at the cost of staler ASX-open timing.
-  // Mon-Sat: the Saturday fire exists only so Friday's UK/US/OTC data isn't
-  // stuck waiting until Monday (there is no Saturday ASX; it reads as dupes).
+  // --- the two lake CONSUMERS.
+  //
+  // The screener (global-analyst) is NOT fired on a fixed weekday slot any
+  // more: ingest-asx.yml dispatches it directly when the ASX ingest
+  // completes, so a long morning can never outrun a fixed fire. (The old
+  // 01:30 Mon-Sat slot assumed 31-50 min ingests; on 2026-08-28, a
+  // reporting-season peak, the ingest took 63 min, the screener found the
+  // ASX day still pending, and same-day ASX ideas slipped a day.)
+  // What stays here for the screener:
+  //   - Saturday 01:30: there is no Saturday ASX ingest to chain from, and
+  //     Friday's UK/US/OTC data must not wait until Monday.
+  //   - Mon-Fri 02:15 FALLBACK: if the 00:35 ingest fire is missed entirely
+  //     or the chained dispatch fails, this still screens the day (last
+  //     evening's UK/OTC plus whatever ASX wrote). On a normal day it re-runs
+  //     shortly after the chained run and dedupes to a cheap no-op — the
+  //     established duplicate-is-free / missed-run-loses-a-day trade. Kept
+  //     BEFORE the 02:30 US ingest so US timing (read a day behind via the
+  //     multi-day lookback) is unchanged.
   // Pinned in UTC, not Sydney: the ingests are UTC-pinned, and a Sydney-local
-  // time would drift an hour against them at each DST change and race the
-  // ASX ingest for half the year.
+  // time would drift an hour against them at each DST change.
   { owner: "hdcapital", repo: "global-analyst", workflow: "daily.yml", ref: "main",
-    tz: "UTC", at: "01:30", days: [1, 2, 3, 4, 5, 6] },
+    tz: "UTC", at: "01:30", days: [6] },
+  { owner: "hdcapital", repo: "global-analyst", workflow: "daily.yml", ref: "main",
+    tz: "UTC", at: "02:15", days: [1, 2, 3, 4, 5] },
 
-  // 5 min behind the screener, same window and rationale.
+  // The watchlist keeps its fixed 01:35 slot (~3h after last night's UK/OTC
+  // ingests; ASX has just landed on a normal morning). It shares the
+  // screener's old race on a >60-min ASX morning — chain it from
+  // ingest-asx.yml the same way if that ever matters.
   { owner: "hdcapital", repo: "global-watchlist-openai", workflow: "daily_watchlist.yml", ref: "main",
     tz: "UTC", at: "01:35", days: [1, 2, 3, 4, 5, 6] },
 

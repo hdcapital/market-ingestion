@@ -64,3 +64,42 @@ jobs:
           name: lake-asx-${{ github.run_id }}
           path: "**/_lake/"
           if-no-files-found: warn
+
+      # The screener (hdcapital/global-analyst) used to fire on a fixed Worker
+      # slot and raced long mornings: on 2026-08-28 (reporting-season peak)
+      # this ingest took 63 minutes, the screener's 01:30 UTC fire found the
+      # ASX day still pending, and same-day ASX ideas slipped a day. Chaining
+      # the dispatch off ingest completion removes the race by construction —
+      # the done-marker is written before this step runs, so the screener can
+      # never see today as pending.
+      #
+      # Runs even when the Ingest step failed: a partial day still writes a
+      # FAILED marker whose documents the screener reads, and the other three
+      # markets need their daily screen regardless. Skipped for dry runs
+      # (nothing reached S3, so there is nothing new to screen).
+      #
+      # Needs the CONSUMER_DISPATCH_PAT secret: a fine-grained PAT with
+      # Actions read+write on hdcapital/global-analyst (the Cloudflare
+      # Worker's GH_PAT already has this — the same value works). A missing
+      # secret or failed dispatch fails this step LOUDLY, because a silently
+      # unfired screener looks exactly like a quiet news day.
+      - name: Dispatch the screener (global-analyst)
+        if: ${{ !cancelled() && inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ secrets.CONSUMER_DISPATCH_PAT }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::CONSUMER_DISPATCH_PAT secret is not set — the screener was NOT dispatched. Add a fine-grained PAT with Actions:write on hdcapital/global-analyst (the scheduler Worker's GH_PAT value works), or fire daily.yml manually."
+            exit 1
+          fi
+          for delay in 2 4 8 16 0; do
+            if gh workflow run daily.yml --repo hdcapital/global-analyst --ref main; then
+              echo "Dispatched global-analyst daily.yml."
+              exit 0
+            fi
+            if [ "$delay" = "0" ]; then break; fi
+            echo "Dispatch failed; retrying in ${delay}s..."
+            sleep "$delay"
+          done
+          echo "::error::Could not dispatch hdcapital/global-analyst daily.yml — fire it manually (its Actions tab → Run workflow). The 02:15 UTC Worker fallback will also catch today."
+          exit 1

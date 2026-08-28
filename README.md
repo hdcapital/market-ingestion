@@ -119,3 +119,14 @@ scan grows with the lake and can run long.
   Worker: a duplicate ingest is free (the lake dedupes), a missed one loses a
   day (the 2026-08-11 Worker-migration gap cost the lake a whole US day). The
   monthly compact job keeps its GitHub cron (a late fire is harmless there).
+- **The screener is chained, not scheduled, on ASX days.** `ingest-asx.yml`
+  dispatches `hdcapital/global-analyst`'s `daily.yml` as its final step, so
+  the screener only ever fires after the day's ASX done-marker exists — a
+  fixed screener slot raced long reporting-season ingests (2026-08-28: a
+  63-minute ingest overran the old 01:30 UTC fire and the ASX day was
+  screened a day late). This needs the `CONSUMER_DISPATCH_PAT` repo secret
+  (fine-grained PAT, Actions read+write on `hdcapital/global-analyst`; the
+  scheduler Worker's `GH_PAT` value works). The Worker keeps a Saturday
+  01:30 UTC screener fire (no ASX ingest to chain from that day) and a
+  Mon–Fri 02:15 UTC fallback fire in case the ingest fire itself is missed —
+  a duplicate screener run dedupes to a cheap no-op.
