@@ -1,7 +1,7 @@
 # BRANCH-ONLY OVERRIDE for the Claude-analyst build session. On main this is
-# the production US ingest; here it harvests real Form 4 / SC 13G fixtures by
-# running the SAME ingester code in --dry-run mode (local _lake/, S3 never
-# touched) with US_FORMS widened, then commits the output to this branch.
+# the production US ingest; here it harvests real fixture filings by running
+# the SAME ingester code in --dry-run mode (local _lake/, S3 never touched)
+# with US_FORMS overridden, then commits the output to this branch.
 # schedule: is intentionally absent — scheduled runs fire from main only.
 name: Ingest US
 
@@ -21,6 +21,12 @@ on:
       max_filings:
         description: "Cap collection size"
         default: "1500"
+      forms:
+        description: "US_FORMS override (comma-separated)"
+        default: "4,4/A"
+      export_name:
+        description: "Tarball name under _lake_export/"
+        default: "us-form4-dryrun"
 
 concurrency: ingest-us
 
@@ -44,11 +50,11 @@ jobs:
       - name: Offline selftest
         run: python -m ingestion.selftest
 
-      - name: Dry-run ingest with widened US form scope
+      - name: Dry-run ingest with overridden US form scope
         run: python -m ingestion.run --market us --dry-run --max-docs "${{ inputs.max_docs }}"
         env:
           S3_LAKE_PREFIX: "market-data/"
-          US_FORMS: "4,4/A,SC 13G,SC 13G/A,SC 13D,SC 13D/A"
+          US_FORMS: "${{ inputs.forms }}"
           MAX_US_FILINGS: "${{ inputs.max_filings || '1500' }}"
           US_LOOKBACK_DAYS: "${{ inputs.lookback_days || '3' }}"
 
@@ -56,10 +62,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p _lake_export
-          tar -czf "_lake_export/us-form4-dryrun.tar.gz" -C _lake .
+          tar -czf "_lake_export/${{ inputs.export_name }}.tar.gz" -C _lake .
           git config user.name "lake-export-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add _lake_export/us-form4-dryrun.tar.gz
-          git commit -m "Dry-run Form 4/13G fixture harvest (US_FORMS widened, S3 untouched)"
+          git add "_lake_export/${{ inputs.export_name }}.tar.gz"
+          git commit -m "Dry-run fixture harvest: ${{ inputs.forms }}"
           git pull --rebase origin "${GITHUB_REF_NAME}" || true
           git push
