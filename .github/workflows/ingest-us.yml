@@ -1,42 +1,36 @@
-# BRANCH-ONLY OVERRIDE for the Claude-analyst build session. On main this is
-# the production US ingest; here it harvests real fixture filings by running
-# the SAME ingester code in --dry-run mode (local _lake/, S3 never touched)
-# with US_FORMS overridden, then commits the output to this branch.
-# schedule: is intentionally absent — scheduled runs fire from main only.
 name: Ingest US
 
 on:
+  # Belt-and-braces behind the Cloudflare Worker (which fires this at 02:30
+  # UTC Tue-Sat): GitHub's schedule: event is best-effort — late delivery and
+  # dropped runs are normal, and a Worker deploy gap cost the lake 2026-08-11
+  # entirely. A duplicate ingest is free (the lake dedupes by accession), a
+  # missed one loses a day, so redundancy is the right trade. Odd minute to
+  # dodge the congested :00/:30 marks where GitHub sheds scheduled load.
+  schedule:
+    - cron: "17 3 * * 2-6"
   workflow_dispatch:
     inputs:
       max_docs:
-        description: "Cap documents this run"
-        default: "150"
+        description: "Cap documents this run (blank = uncapped)"
+        default: ""
       dry_run:
-        description: "(always dry-run on this branch)"
+        description: "Write to local _lake/ + artifact instead of S3"
         type: boolean
-        default: true
+        default: false
       lookback_days:
-        description: "Walk this many days of EDGAR daily index before today"
-        default: "3"
+        description: "Walk this many days of EDGAR daily index before today (blank = default). Raise for backfills."
+        default: ""
       max_filings:
-        description: "Cap collection size"
-        default: "1500"
-      forms:
-        description: "US_FORMS override (comma-separated)"
-        default: "4,4/A"
-      export_name:
-        description: "Tarball name under _lake_export/"
-        default: "us-form4-dryrun"
+        description: "Override the MAX_US_FILINGS cap for wide backfills (blank = 5000)"
+        default: ""
 
 concurrency: ingest-us
-
-permissions:
-  contents: write
 
 jobs:
   ingest:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
@@ -45,27 +39,37 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          if [ -d market-ingestion ]; then cd market-ingestion; fi
+          pip install -r requirements.txt
 
       - name: Offline selftest
-        run: python -m ingestion.selftest
-
-      - name: Dry-run ingest with overridden US form scope
-        run: python -m ingestion.run --market us --dry-run --max-docs "${{ inputs.max_docs }}"
-        env:
-          S3_LAKE_PREFIX: "market-data/"
-          US_FORMS: "${{ inputs.forms }}"
-          MAX_US_FILINGS: "${{ inputs.max_filings || '1500' }}"
-          US_LOOKBACK_DAYS: "${{ inputs.lookback_days || '3' }}"
-
-      - name: Commit dry-run lake to this branch
         run: |
-          set -euo pipefail
-          mkdir -p _lake_export
-          tar -czf "_lake_export/${{ inputs.export_name }}.tar.gz" -C _lake .
-          git config user.name "lake-export-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add "_lake_export/${{ inputs.export_name }}.tar.gz"
-          git commit -m "Dry-run fixture harvest: ${{ inputs.forms }}"
-          git pull --rebase origin "${GITHUB_REF_NAME}" || true
-          git push
+          if [ -d market-ingestion ]; then cd market-ingestion; fi
+          python -m ingestion.selftest
+
+      - name: Ingest
+        run: |
+          if [ -d market-ingestion ]; then cd market-ingestion; fi
+          ARGS="--market us"
+          [ -n "${{ inputs.max_docs }}" ] && ARGS="$ARGS --max-docs ${{ inputs.max_docs }}"
+          [ "${{ inputs.dry_run }}" = "true" ] && ARGS="$ARGS --dry-run"
+          python -m ingestion.run $ARGS
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_BUCKET_NAME: ${{ secrets.AWS_BUCKET_NAME }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          S3_LAKE_PREFIX: "market-data/"
+          # Blank on scheduled runs (inputs are empty there) — the scraper
+          # falls back to its own defaults on blank values.
+          MAX_US_FILINGS: "${{ inputs.max_filings || '5000' }}"
+          US_LOOKBACK_DAYS: "${{ inputs.lookback_days }}"
+
+      - name: Upload dry-run lake
+        if: inputs.dry_run == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: lake-us-${{ github.run_id }}
+          path: "**/_lake/"
+          if-no-files-found: warn
