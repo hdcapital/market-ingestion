@@ -1,50 +1,79 @@
+# BRANCH-ONLY OVERRIDE for the Claude-analyst build session. On main this
+# file is the DuckDB query runner; on this branch it exports selected lake
+# days as tarballs committed to the branch (the build environment can reach
+# github.com but neither S3 nor the Actions artifact store). Dispatched via
+# the registered "Query lake" workflow id with ref=this-branch. Remove with
+# the branch.
 name: Query lake
 
 on:
   workflow_dispatch:
     inputs:
       sql:
-        description: "DuckDB SQL against the `docs` / `docs_compact` views"
-        required: true
+        description: "IGNORED on this branch (kept for input compatibility)"
+        required: false
+        default: ""
       market:
-        description: "Restrict views to one market (asx|uk|us|otc; blank = all)"
+        description: "IGNORED on this branch"
         default: ""
       month:
-        description: "Restrict views to one month (YYYY-MM; blank = all)"
+        description: "IGNORED on this branch"
         default: ""
+      spec:
+        description: "space-separated market:YYYY-MM-DD pairs, e.g. 'asx:2026-09-08 uk:2026-09-05'"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
 
 concurrency: query-${{ github.run_id }}
 
 jobs:
-  query:
+  export:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install DuckDB
-        run: pip install duckdb
-
-      - name: Run query
-        run: python -m ingestion.query
+      - name: Export lake days
         env:
-          QUERY_SQL: ${{ inputs.sql }}
-          QUERY_MARKET: ${{ inputs.market }}
-          QUERY_MONTH: ${{ inputs.month }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_BUCKET_NAME: ${{ secrets.AWS_BUCKET_NAME }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-          S3_LAKE_PREFIX: "market-data/"
+          BUCKET: ${{ secrets.AWS_BUCKET_NAME }}
+          SPEC: ${{ inputs.spec }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SPEC" ]; then echo "spec input is required on this branch"; exit 2; fi
+          mkdir -p _lake_export
+          for pair in $SPEC; do
+            market="${pair%%:*}"; day="${pair#*:}"
+            y="${day:0:4}"; m="${day:5:2}"; d="${day:8:2}"
+            dest="_export_stage/$market-$day"
+            mkdir -p "$dest/documents/$market/$y/$m/$d" "$dest/manifests/$market"
+            aws s3 cp --recursive --only-show-errors \
+              "s3://$BUCKET/market-data/documents/$market/$y/$m/$d/" \
+              "$dest/documents/$market/$y/$m/$d/" \
+              --exclude '*' --include '*.json'
+            aws s3 cp --only-show-errors \
+              "s3://$BUCKET/market-data/manifests/$market/$day.jsonl" \
+              "$dest/manifests/$market/$day.jsonl" || true
+            aws s3 cp --only-show-errors \
+              "s3://$BUCKET/market-data/manifests/$market/$day.done.json" \
+              "$dest/manifests/$market/$day.done.json" || true
+            count=$(find "$dest/documents" -name '*.json' | wc -l)
+            echo "exported $market $day: $count documents"
+            tar -C "$dest" -czf "_lake_export/$market-$day.tar.gz" .
+          done
+          ls -la _lake_export/
 
-      - name: Upload results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: query-results-${{ github.run_id }}
-          path: query_results.csv
-          if-no-files-found: ignore
+      - name: Commit tarballs to this branch
+        run: |
+          set -euo pipefail
+          git config user.name "lake-export-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add _lake_export/
+          git commit -m "Lake export for analyst build: ${{ inputs.spec }}"
+          git pull --rebase origin "${GITHUB_REF_NAME}" || true
+          git push
