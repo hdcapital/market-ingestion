@@ -228,6 +228,33 @@ ADMIN_ONLY_ITEMS = {"5.07", "5.03", "3.03", "5.08", "7.01", "9.01"}
 _ITEM_RE = re.compile(r"\bItem\s+(\d{1,2}\.\d{2})", re.IGNORECASE)
 
 
+def _is_s3_access_denied(r: requests.Response) -> bool:
+    """The S3 error document a nonexistent (or forbidden) Archives key gets:
+    an XML body carrying <Code>AccessDenied</Code>."""
+    try:
+        return ("xml" in (r.headers.get("Content-Type") or "").lower()
+                and "<Code>AccessDenied</Code>" in r.text[:1024])
+    except Exception:
+        return False
+
+
+def _describe_block(r: requests.Response, label: str) -> None:
+    """SEC serves distinguishable refusal pages (its own 'Undeclared Automated
+    Tool' / 'exceeded traffic limits' notices vs the Akamai edge's 'Access
+    Denied' with a Reference #). Which one decides the remedy — wait it out,
+    fix the UA, or accept the IP range is blocked — so log enough to tell."""
+    try:
+        body = re.sub(r"<[^>]+>", " ", r.text[:3000])
+        body = re.sub(r"\s+", " ", body).strip()[:300]
+        hdrs = {k: v for k, v in r.headers.items()
+                if k.lower() in ("server", "retry-after", "x-reference-error",
+                                 "akamai-grn", "content-type")}
+        print(f"      [i] {label}: HTTP {r.status_code} headers={hdrs}")
+        print(f"      [i] {label}: body starts: {body!r}")
+    except Exception as e:  # diagnostics must never break the fetch loop
+        print(f"      [i] {label}: could not describe block ({type(e).__name__})")
+
+
 def http_get_with_disposition(session: requests.Session, url: str, *, params=None,
                               timeout=DOWNLOAD_TIMEOUT, label=""):
     """(response, disposition) — retry pattern from app10.py, plus an honest
@@ -236,6 +263,13 @@ def http_get_with_disposition(session: requests.Session, url: str, *, params=Non
       "ok"                        200 response returned
       "missing: HTTP <code>"      deterministic non-retryable answer (a 404ed
                                   weekend/holiday daily index is a real answer)
+      "denied: <detail>"          S3-style 403 AccessDenied — deterministic
+                                  (retrying cannot change it) but AMBIGUOUS:
+                                  S3 answers a nonexistent key exactly like a
+                                  forbidden one. Only a caller that can check
+                                  whether the key should exist may downgrade
+                                  this to missing; everyone else must treat
+                                  it like blocked
       "blocked: <detail>"         retries exhausted on 403/429/5xx or network
                                   errors — the server refused us; the resource
                                   may well exist and the day is NOT safe to
@@ -253,7 +287,17 @@ def http_get_with_disposition(session: requests.Session, url: str, *, params=Non
                             headers={"User-Agent": SEC_USER_AGENT})
             if r.status_code == 200:
                 return r, "ok"
+            if r.status_code == 403 and _is_s3_access_denied(r):
+                # Since 2026-09-08 the Archives origin answers a NONEXISTENT
+                # key with S3's AccessDenied XML instead of 404 (S3 hides
+                # missing keys from callers without list permission), so a
+                # plain long weekend of daily indexes read as four blocked
+                # days and failed the run (#56/#57). Deterministic — return
+                # immediately rather than burning the retry budget.
+                return None, "denied: HTTP 403 S3 AccessDenied"
             if r.status_code in (403, 429, 500, 502, 503, 504):
+                if attempt == 1 and r.status_code in (403, 429):
+                    _describe_block(r, label or url)
                 detail = f"HTTP {r.status_code} x{attempt}"
                 time.sleep(HTTP_BACKOFF_SECONDS * attempt)
                 continue
@@ -341,14 +385,44 @@ def load_cik_ticker_map(session: requests.Session) -> Dict[str, str]:
         return {}
 
 
+def _resolve_denied_day(session: requests.Session, d: datetime.date,
+                        listings: Dict[str, Optional[str]]) -> str:
+    """Turn a 403-AccessDenied daily-index day into "missing…" or "blocked…".
+
+    S3's AccessDenied is exactly what a NONEXISTENT key looks like, so ask
+    the quarter's directory listing (index.json names every posted daily
+    file, and is cached per quarter in `listings`): listing reachable and the
+    day's file absent -> the day genuinely has no index (weekend, holiday, or
+    not posted yet) and reads as a deterministic miss; the file listed, or
+    the listing itself unreachable -> keep the loud 2026-08-10 "blocked"
+    behaviour, because a real deny must never look like a quiet weekend.
+    """
+    qkey = f"{d.year}/QTR{_quarter(d.month)}"
+    if qkey not in listings:
+        r, _ = http_get_with_disposition(
+            session,
+            f"https://www.sec.gov/Archives/edgar/daily-index/{qkey}/index.json",
+            label=f"quarter listing {qkey}")
+        listings[qkey] = r.text if r is not None else None
+    listing = listings[qkey]
+    fname = f"form.{d.strftime('%Y%m%d')}.idx"
+    if listing is None:
+        return "blocked: HTTP 403 AccessDenied, quarter listing unreachable"
+    if fname in listing:
+        return f"blocked: HTTP 403 AccessDenied on a file the quarter listing shows ({fname})"
+    return "missing: no daily index posted for day (403 AccessDenied, absent from quarter listing)"
+
+
 def collect_us_filings():
     """
     Walk the EDGAR daily form index for the last US_LOOKBACK_DAYS and return
     (filings, day_notes):
       filings   [{id (accession), cik, ticker, company, form, date, url}, ...]
       day_notes [{"date": "YYYY-MM-DD", "disposition": "ok|missing…|blocked…"}]
-    Weekends/holidays 404 ("missing") and are skipped; a "blocked" day means
-    SEC refused the request and the caller must NOT treat the run as a clean
+    Weekends/holidays have no index file ("missing" — served as 404 or, since
+    2026-09-08, as an S3 403 AccessDenied that _resolve_denied_day verifies
+    against the quarter listing) and are skipped; a "blocked" day means SEC
+    refused the request and the caller must NOT treat the run as a clean
     empty day. Dedupe across days is by accession number; S3-level dedupe in
     the adapter makes the overlap free.
     """
@@ -357,6 +431,7 @@ def collect_us_filings():
 
     filings: Dict[str, Dict[str, Any]] = {}
     day_notes: List[Dict[str, str]] = []
+    listings: Dict[str, Optional[str]] = {}
     today_us = datetime.datetime.now(datetime.timezone.utc).date()
 
     for delta in range(US_LOOKBACK_DAYS + 1):
@@ -365,6 +440,8 @@ def collect_us_filings():
                f"{d.year}/QTR{_quarter(d.month)}/form.{d.strftime('%Y%m%d')}.idx")
         r, disposition = http_get_with_disposition(session, url,
                                                    label=f"daily index {d}")
+        if disposition.startswith("denied"):
+            disposition = _resolve_denied_day(session, d, listings)
         day_notes.append({"date": d.isoformat(), "disposition": disposition})
         if r is None:
             continue
