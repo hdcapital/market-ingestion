@@ -228,6 +228,23 @@ ADMIN_ONLY_ITEMS = {"5.07", "5.03", "3.03", "5.08", "7.01", "9.01"}
 _ITEM_RE = re.compile(r"\bItem\s+(\d{1,2}\.\d{2})", re.IGNORECASE)
 
 
+def _describe_block(r: requests.Response, label: str) -> None:
+    """SEC serves distinguishable refusal pages (its own 'Undeclared Automated
+    Tool' / 'exceeded traffic limits' notices vs the Akamai edge's 'Access
+    Denied' with a Reference #). Which one decides the remedy — wait it out,
+    fix the UA, or accept the IP range is blocked — so log enough to tell."""
+    try:
+        body = re.sub(r"<[^>]+>", " ", r.text[:3000])
+        body = re.sub(r"\s+", " ", body).strip()[:300]
+        hdrs = {k: v for k, v in r.headers.items()
+                if k.lower() in ("server", "retry-after", "x-reference-error",
+                                 "akamai-grn", "content-type")}
+        print(f"      [i] {label}: HTTP {r.status_code} headers={hdrs}")
+        print(f"      [i] {label}: body starts: {body!r}")
+    except Exception as e:  # diagnostics must never break the fetch loop
+        print(f"      [i] {label}: could not describe block ({type(e).__name__})")
+
+
 def http_get_with_disposition(session: requests.Session, url: str, *, params=None,
                               timeout=DOWNLOAD_TIMEOUT, label=""):
     """(response, disposition) — retry pattern from app10.py, plus an honest
@@ -254,6 +271,8 @@ def http_get_with_disposition(session: requests.Session, url: str, *, params=Non
             if r.status_code == 200:
                 return r, "ok"
             if r.status_code in (403, 429, 500, 502, 503, 504):
+                if attempt == 1 and r.status_code in (403, 429):
+                    _describe_block(r, label or url)
                 detail = f"HTTP {r.status_code} x{attempt}"
                 time.sleep(HTTP_BACKOFF_SECONDS * attempt)
                 continue
