@@ -110,6 +110,54 @@ def main() -> int:
           len(day_notes) == us.US_LOOKBACK_DAYS + 1
           and all(n["disposition"].startswith("blocked") for n in day_notes))
 
+    # Regression (2026-09-08): SEC's Archives origin began answering
+    # NONEXISTENT daily-index files with S3-style 403 AccessDenied instead of
+    # 404, so a plain long weekend (Sat+Sun+Labor Day+not-yet-posted Tuesday)
+    # read as four blocked days and failed the run. A "denied" day must be
+    # resolved through the quarter listing: absent from a reachable listing ->
+    # missing (quiet day); listed, or listing unreachable -> still blocked.
+    import types
+
+    def fake_denied_transport(listing_text):
+        def _get(session, url, **kw):
+            if url.endswith("index.json"):
+                if listing_text is None:
+                    return None, "denied: HTTP 403 S3 AccessDenied"
+                return types.SimpleNamespace(text=listing_text), "ok"
+            return None, "denied: HTTP 403 S3 AccessDenied"
+        return _get
+
+    us.http_get_with_disposition = fake_denied_transport("")  # nothing listed
+    try:
+        filings, day_notes = us.collect_us_filings()
+    finally:
+        us.http_get_with_disposition = orig_get
+    check("denied day absent from quarter listing reads missing",
+          filings == []
+          and len(day_notes) == us.US_LOOKBACK_DAYS + 1
+          and all(n["disposition"].startswith("missing") for n in day_notes))
+    check("denied-because-absent still writes ok_empty",
+          us_adapter.empty_collection_status(day_notes) == "ok_empty")
+
+    listed = "form.%s.idx" % TODAY.replace("-", "")
+    us.http_get_with_disposition = fake_denied_transport(listed)  # today listed
+    try:
+        filings, day_notes = us.collect_us_filings()
+    finally:
+        us.http_get_with_disposition = orig_get
+    check("denied day present in quarter listing stays blocked",
+          any(n["disposition"].startswith("blocked") for n in day_notes)
+          and us_adapter.empty_collection_status(day_notes) == "failed")
+
+    us.http_get_with_disposition = fake_denied_transport(None)  # listing denied
+    try:
+        filings, day_notes = us.collect_us_filings()
+    finally:
+        us.http_get_with_disposition = orig_get
+    check("denied day with unreachable listing stays blocked",
+          all(n["disposition"].startswith("blocked") for n in day_notes)
+          and us_adapter.empty_collection_status(day_notes) == "failed")
+
     shutil.rmtree(root, ignore_errors=True)
     print(f"\nSELFTEST: {'PASS' if not failures else 'FAIL ' + str(failures)}")
     return 0 if not failures else 1
